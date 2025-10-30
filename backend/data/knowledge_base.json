@@ -1,0 +1,17 @@
+[
+  {
+    "id": "qwen_overview",
+    "title": "Qwen Model Overview",
+    "content": "Qwen is a family of large language models created by Alibaba Cloud. The models support multilingual reasoning, structured tool calling and multimodal inputs across text, images, audio and video. They are accessible through the DashScope platform or as open models published on the Hugging Face Hub."
+  },
+  {
+    "id": "dashscope_usage",
+    "title": "DashScope Usage Basics",
+    "content": "DashScope exposes Qwen models through a REST API. Clients authenticate with the DASHSCOPE_API_KEY environment variable. Popular models include qwen-turbo for lightweight workloads, qwen-plus for balanced quality and cost, and qwen-max for complex reasoning. Requests support JSON or OpenAI compatible payloads."
+  },
+  {
+    "id": "demo_tools",
+    "title": "Demo Tooling Integrations",
+    "content": "The demo agent combines three tools. The image tool proxies prompts to the Pollinations service and returns a URL and Base64 thumbnail. The search tool wraps DuckDuckGo to collect concise organic search snippets. The retrieval tool performs TF-IDF similarity over a small knowledge base to ground responses with factual context."
+  }
+]

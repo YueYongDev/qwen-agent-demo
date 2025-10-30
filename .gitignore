@@ -1,0 +1,65 @@
+# Logs & runtime
+*.log
+*.out
+*.err
+log/
+logs/
+backend.log
+
+# Environment variables & secrets
+.env
+.env.*
+*.env
+.envrc
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.so
+.pytest_cache/
+.mypy_cache/
+.pyre/
+.pytype/
+.dmypy.json
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+pip-wheel-metadata/
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Node.js / frontend
+node_modules/
+**/dist/
+*.tsbuildinfo
+.eslintcache
+.parcel-cache/
+.turbo/
+.pnpm-store/
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE & editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
