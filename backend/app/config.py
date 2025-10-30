@@ -59,6 +59,31 @@ class Settings(BaseModel):
         description="Raw JSON string describing MCP servers (alternative to file).",
     )
 
+    # 新增：模型能力配置（文件路径或内联 JSON）
+    models_config_path: Optional[str] = Field(
+        default=os.getenv("MODELS_CONFIG_PATH"),
+        description="Path to a JSON file describing available models and capabilities.",
+    )
+    models_inline_config: Optional[str] = Field(
+        default=os.getenv("MODELS_JSON"),
+        description="Inline JSON string describing models (alternative to file).",
+    )
+
+    # 新增：联网搜索开关与选项（字符串形式，稍后由服务解析）
+    enable_search: bool = Field(
+        default_factory=lambda: str(os.getenv("ENABLE_SEARCH", "false")).strip().lower() in ("1", "true", "yes", "on"),
+        description="Enable provider-native web search via extra_body when supported.",
+    )
+    search_options_inline: Optional[str] = Field(
+        default=os.getenv("SEARCH_OPTIONS_JSON"),
+        description="Raw JSON string of search_options to pass via extra_body when enable_search is true.",
+    )
+
+    llm_generate_cfg_inline: Optional[str] = Field(
+        default=os.getenv("LLM_GENERATE_CFG_JSON"),
+        description="Raw JSON string for qwen-agent generate_cfg to merge into llm params (e.g., {'top_p':0.8}).",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -1,0 +1,56 @@
+{
+  "models": [
+    {
+      "id": "qwen-turbo",
+      "name": "Qwen-Turbo",
+      "description": "高效率推理与对话，低延迟与成本。",
+      "tags": ["dashscope", "fast", "efficient"],
+      "supports_thinking": false,
+      "provider_model": "qwen-turbo",
+      "supports_search": false,
+      "default_search_options": {
+        "forced_search": false,
+        "search_strategy": "pro"
+      }
+    },
+    {
+      "id": "qwen-flash",
+      "name": "Qwen-Flash",
+      "description": "超低延迟快速响应，适合实时应用。",
+      "tags": ["dashscope", "flash", "real-time"],
+      "supports_thinking": false,
+      "provider_model": "qwen-flash",
+      "supports_search": false,
+      "default_search_options": {
+        "forced_search": false,
+        "search_strategy": "pro"
+      }
+    },
+    {
+      "id": "qwen-plus",
+      "name": "Qwen-Plus",
+      "description": "更强推理与工具使用能力，支持原生 enable_thinking。",
+      "tags": ["dashscope", "reasoning", "tools"],
+      "supports_thinking": true,
+      "provider_model": "qwen-plus",
+      "supports_search": true,
+      "default_search_options": {
+        "forced_search": false,
+        "search_strategy": "pro"
+      }
+    },
+    {
+      "id": "qwen3-max",
+      "name": "Qwen3-Max",
+      "description": "旗舰模型，兼顾复杂任务与创作场景。",
+      "tags": ["flagship", "multimodal", "comprehensive"],
+      "supports_thinking": true,
+      "provider_model": "qwen3-max",
+      "supports_search": true,
+      "default_search_options": {
+        "forced_search": false,
+        "search_strategy": "pro"
+      }
+    }
+  ]
+}

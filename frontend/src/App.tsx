@@ -6,6 +6,14 @@ import {
   useState,
 } from 'react'
 import './App.css'
+import { marked } from 'marked'
+marked.setOptions({ async: false })
+import DOMPurify from 'dompurify'
+
+const renderMarkdownToHtml = (src: string): string => {
+  const parsed = marked.parse(src)
+  return typeof parsed === 'string' ? parsed : ''
+}
 
 type Role = 'user' | 'assistant'
 
@@ -58,7 +66,7 @@ type ModeConfig = {
   options: ConversationSettings
 }
 
-type ModelId = 'qwen3-max' | 'qwen2.5-72b' | 'qwen2.5-32b' | 'qwen2.5-coder'
+type ModelId = string
 
 type ModelConfig = {
   id: ModelId
@@ -164,12 +172,7 @@ const MODES: ModeConfig[] = [
 ]
 
 const FEATURE_ACTIONS = [
-  { label: '添加照片和文件', icon: '📎' },
-  { label: '深度研究', icon: '📡' },
-  { label: '创建图片', icon: '🎨' },
-  { label: '代理模式', icon: '🧩' },
-  { label: '添加源', icon: '🔗' },
-  { label: '更多', icon: '⋯' },
+  { label: '上传文档', icon: '📎' },
 ]
 
 const MODE_MAP = MODES.reduce<Record<ModeId, ModeConfig>>((acc, mode) => {
@@ -204,10 +207,10 @@ const MODELS: ModelConfig[] = [
   },
 ]
 
-const MODEL_MAP = MODELS.reduce<Record<ModelId, ModelConfig>>((acc, model) => {
-  acc[model.id] = model
-  return acc
-}, {} as Record<ModelId, ModelConfig>)
+
+
+// 当模型列表更新后，若默认或当前会话模型不在新列表中，则回退到首个模型
+
 
 const generateId = (): string => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -219,7 +222,7 @@ const generateId = (): string => {
 const loadDefaultModelId = (): ModelId => {
   if (typeof window === 'undefined') return DEFAULT_MODEL_ID
   const stored = window.localStorage.getItem(DEFAULT_MODEL_STORAGE_KEY)
-  if (stored && stored in MODEL_MAP) {
+  if (stored) {
     return stored as ModelId
   }
   return DEFAULT_MODEL_ID
@@ -302,7 +305,9 @@ const createConversation = (overrides?: Partial<Conversation>): Conversation => 
   const modeId = overrides?.modeId ?? DEFAULT_MODE_ID
   const mode = MODE_MAP[modeId] ?? MODE_MAP[DEFAULT_MODE_ID]
   const defaultModelId = overrides?.modelId ?? loadDefaultModelId()
-  const model = MODEL_MAP[defaultModelId] ?? MODEL_MAP[DEFAULT_MODEL_ID]
+  const model = MODELS.find((m) => m.id === defaultModelId)
+    ?? MODELS.find((m) => m.id === DEFAULT_MODEL_ID)
+    ?? MODELS[0]
 
   return {
     id: overrides?.id ?? generateId(),
@@ -313,7 +318,7 @@ const createConversation = (overrides?: Partial<Conversation>): Conversation => 
     archived: overrides?.archived ?? false,
     messages: overrides?.messages ?? [],
     toolEvents: overrides?.toolEvents ?? [],
-    settings: sanitizeSettings(overrides?.settings, mode.options),
+    settings: sanitizeSettings(overrides?.settings, { ...mode.options, allowWebSearch: false }),
     createdAt: overrides?.createdAt ?? now,
     updatedAt: overrides?.updatedAt ?? now,
   }
@@ -346,7 +351,7 @@ const loadStoredConversations = (): Conversation[] => {
             ? (data.updatedAt as string)
             : createdAt
         const modelIdValue =
-          typeof data.modelId === 'string' && data.modelId in MODEL_MAP
+          typeof data.modelId === 'string'
             ? (data.modelId as ModelId)
             : DEFAULT_MODEL_ID
 
@@ -402,7 +407,41 @@ function App() {
     if (stored.length > 0) return stored
     return [createConversation()]
   })
-  const [defaultModelId, setDefaultModelId] = useState<ModelId>(() => loadDefaultModelId())
+  const [models, setModels] = useState<ModelConfig[]>(MODELS)
+useEffect(() => {
+  let cancelled = false
+  ;(async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/api/models`)
+      if (!resp.ok) return
+      const data = (await resp.json()) as { models: Array<{ id: string; name?: string; description?: string; tags?: string[] }> }
+      const fetched: ModelConfig[] = (data?.models ?? []).map((m) => ({
+        id: String(m.id),
+        name: String(m.name ?? m.id ?? 'unknown'),
+        description: String(m.description ?? ''),
+        tags: Array.isArray(m.tags) ? m.tags.map(String) : [],
+      }))
+      if (!cancelled && fetched.length > 0) {
+        setModels(fetched)
+      }
+    } catch {
+      // ignore, keep fallback MODELS
+    }
+  })()
+  return () => { cancelled = true }
+}, [])
+
+const modelMap = useMemo(() => {
+  return models.reduce((acc, m) => {
+    acc[m.id] = m
+    return acc
+  }, {} as Record<ModelId, ModelConfig>)
+}, [models])
+
+// 当模型列表更新后，若默认或当前会话模型不在新列表中，则回退到首个模型
+
+
+const [defaultModelId, setDefaultModelId] = useState<ModelId>(() => loadDefaultModelId())
   const [activeConversationId, setActiveConversationId] = useState<string>(
     () => conversations[0]?.id ?? ''
   )
@@ -414,6 +453,7 @@ function App() {
   const [openConversationMenuId, setOpenConversationMenuId] = useState<string | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
 
   const messageEndRef = useRef<HTMLDivElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -517,15 +557,35 @@ function App() {
     setError(null)
   }, [activeConversationId])
 
+  useEffect(() => {
+    if (!info) return
+    const timer = setTimeout(() => setInfo(null), 2000)
+    return () => clearTimeout(timer)
+  }, [info])
+
   const activeConversation = useMemo(
     () => conversations.find((item) => item.id === activeConversationId) ?? null,
     [conversations, activeConversationId]
   )
 
+  // 校验并在模型列表变化后做回退，需位于 activeConversation 定义之后，避免 TDZ
+  useEffect(() => {
+    const firstId = models[0]?.id
+    if (!firstId) return
+    const stored = localStorage.getItem(DEFAULT_MODEL_STORAGE_KEY)
+    if (stored && !modelMap[stored]) {
+      localStorage.setItem(DEFAULT_MODEL_STORAGE_KEY, firstId)
+      setDefaultModelId(firstId)
+    }
+    if (activeConversation && !modelMap[activeConversation.modelId]) {
+      handleModelChange(firstId)
+    }
+  }, [models, modelMap, activeConversation])
+
   const currentModel = useMemo(() => {
-    if (!activeConversation) return MODEL_MAP[DEFAULT_MODEL_ID]
-    return MODEL_MAP[activeConversation.modelId] ?? MODEL_MAP[DEFAULT_MODEL_ID]
-  }, [activeConversation])
+    if (!activeConversation) return modelMap[DEFAULT_MODEL_ID] ?? models[0] ?? MODELS[0]
+    return modelMap[activeConversation.modelId] ?? modelMap[DEFAULT_MODEL_ID] ?? models[0] ?? MODELS[0]
+  }, [activeConversation, modelMap, models])
 
   const currentMode = useMemo(() => {
     if (!activeConversation) return MODE_MAP[DEFAULT_MODE_ID]
@@ -533,8 +593,47 @@ function App() {
   }, [activeConversation])
 
   const messages = activeConversation?.messages ?? []
+
+  const splitAssistantContent = (text: string) => {
+    const finalPattern = /(Final\s*Answer|最终回答|最终答案|答案)\s*[:：]?/i
+    const match = finalPattern.exec(text)
+    if (!match) {
+      return { thought: '', final: text.trim() }
+    }
+    const thought = text.slice(0, match.index).trim()
+    const final = text.slice(match.index + match[0].length).trim()
+    return { thought, final }
+  }
   const latestToolEvents = activeConversation?.toolEvents ?? []
   const hasMessages = messages.length > 0
+
+  const renderObservation = (data: unknown) => {
+    if (typeof data === 'string') {
+      return <pre className="thinking-pre">{data}</pre>
+    }
+    try {
+      const obj = data as any
+      if (obj && Array.isArray(obj.results)) {
+        return (
+          <div className="kb-results">
+            {obj.results.map((item: any, i: number) => (
+              <div key={`kb-${i}`} className="kb-result">
+                {'title' in item && <div className="kb-title">{String(item.title)}</div>}
+                {'content' in item && (
+                  <div className="kb-content">{String(item.content)}</div>
+                )}
+                <div className="kb-meta">
+                  {'id' in item && <span>id: {String(item.id)}</span>}
+                  {'score' in item && <span>score: {String(item.score)}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      }
+    } catch {}
+    return <pre className="thinking-pre">{JSON.stringify(data, null, 2)}</pre>
+  }
 
   const filteredConversations = useMemo(() => {
     const search = searchTerm.trim().toLowerCase()
@@ -860,6 +959,26 @@ function App() {
     setOpenConversationMenuId(null)
   }
 
+  const handleToggleDeepThinking = () => {
+    if (!activeConversation || isStreaming) return
+    const next = !activeConversation.settings.deepThinking
+    updateConversation(activeConversation.id, (conversation) => ({
+      ...conversation,
+      settings: { ...conversation.settings, deepThinking: next },
+      updatedAt: new Date().toISOString(),
+    }))
+  }
+
+  const handleToggleWebSearch = () => {
+    if (!activeConversation || isStreaming) return
+    const next = !activeConversation.settings.allowWebSearch
+    updateConversation(activeConversation.id, (conversation) => ({
+      ...conversation,
+      settings: { ...conversation.settings, allowWebSearch: next },
+      updatedAt: new Date().toISOString(),
+    }))
+  }
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
@@ -928,7 +1047,7 @@ function App() {
           model: activeConversation.modelId,
           mode: activeConversation.modeId,
           messages: requestMessages,
-          options: encodeOptions(activeConversation.settings),
+          options: { ...encodeOptions(activeConversation.settings), deep_thinking: activeConversation.settings.deepThinking, enable_search: activeConversation.settings.allowWebSearch },
         }),
         signal: controller.signal,
       })
@@ -942,6 +1061,7 @@ function App() {
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
       const collectedToolEvents: ToolEvent[] = []
+      let finished = false
 
       while (true) {
         const { done, value } = await reader.read()
@@ -957,7 +1077,7 @@ function App() {
             const data = rawChunk.slice(5).trim()
             if (data === '[DONE]') {
               buffer = ''
-              reader.releaseLock()
+              finished = true
               boundary = -1
               break
             }
@@ -982,9 +1102,13 @@ function App() {
 
           boundary = buffer.indexOf('\n\n')
         }
+
+        if (finished) break
       }
 
-      if (buffer.trim().length > 0 && buffer.startsWith('data:')) {
+      reader.releaseLock()
+
+      if (!finished && buffer.trim().length > 0 && buffer.startsWith('data:')) {
         const data = buffer.slice(5).trim()
         if (data !== '[DONE]') {
           try {
@@ -1191,7 +1315,7 @@ function App() {
                     </button>
                   </header>
                   <div className="model-list">
-                    {MODELS.map((model) => {
+                    {(models.length > 0 ? models : MODELS).map((model) => {
                       const isActive = model.id === currentModel.id
                       const isDefault = model.id === defaultModelId
                       return (
@@ -1225,77 +1349,63 @@ function App() {
           <div className="main-header">
             <div className="header-row">
               <div className="header-text">
-                <span className="header-tag">
-                  {currentMode.icon} {currentMode.label}
-                </span>
                 <h1 className="header-title">{greetingText}</h1>
                 <p className="header-subtitle">
                   {currentMode.description}。在这里和 Qwen 对话、创作或进行快速研究。
                 </p>
               </div>
-              <div className="header-actions">
-                <div className="mode-selector">
-                  <button
-                    ref={modeBtnRef}
-                    type="button"
-                    className="model-button"
-                    onClick={() => setIsModeMenuOpen((prev) => !prev)}
-                  >
-                    <span className="model-icon">{currentMode.icon}</span>
-                    <span className="model-label">{currentMode.label}</span>
-                    <span className="model-chevron">⌄</span>
-                  </button>
-                  {isModeMenuOpen && (
-                    <div ref={menuRef} className="mode-menu">
-                      {MODES.map((mode) => (
-                        <button
-                          key={mode.id}
-                          type="button"
-                          className={`mode-item${mode.id === currentMode.id ? ' active' : ''}`}
-                          onClick={() => handleModeChange(mode.id)}
-                        >
-                          <span className="mode-item-icon">{mode.icon}</span>
-                          <span className="mode-item-info">
-                            <span className="mode-item-label">{mode.label}</span>
-                            <span className="mode-item-desc">{mode.description}</span>
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  className="header-btn primary"
-                  onClick={handleCreateConversation}
-                >
-                  ＋ 新建对话
-                </button>
-                <button
-                  type="button"
-                  className="header-btn ghost"
-                  onClick={handleDeleteConversation}
-                >
-                  🗑 删除对话
-                </button>
-              </div>
             </div>
           </div>
 
           <main className={`conversation ${hasMessages ? 'has-messages' : ''}`}>
-            {messages.map((message) => (
-              <div key={message.id} className={`bubble ${message.role}`}>
-                <span className="bubble-role">
-                  {message.role === 'user' ? '你' : 'Qwen'}
-                </span>
-                <div className="bubble-content">
-                  {message.content.split('\n').map((line, index) => (
-                    <p key={`${message.id}-${index}`}>{line}</p>
-                  ))}
-                </div>
-              </div>
-            ))}
-            {isStreaming && (
+        {messages.map((message) => (
+          <div key={message.id} className={`bubble ${message.role}`}>
+            <span className="bubble-role">
+              {message.role === 'user' ? '你' : 'Qwen'}
+            </span>
+            <div className="bubble-content">
+              {message.role === 'assistant' ? (
+                (() => {
+                  const parts = splitAssistantContent(message.content)
+                  return (
+                    <div className="assistant-content">
+                      {activeConversation?.settings.deepThinking && parts.thought && (
+                        <details className="assistant-thought">
+                          <summary className="assistant-thought-header">
+                            <span className="assistant-thought-icon">●</span>
+                            <span className="assistant-thought-label">{parts.final ? '思考完成' : '正在思考...'}</span>
+                          </summary>
+                          <div className="assistant-thought-body">
+                            {parts.thought.split('\n').map((line, index) => (
+                              <p key={`${message.id}-thought-${index}`}>{line}</p>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+                      {parts.final && (
+                        <div className="assistant-final">
+                          <div className="assistant-final-label">最终回答</div>
+                          <div
+                            className="assistant-final-md"
+                            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(renderMarkdownToHtml(parts.final)) }}
+                          />
+                        </div>
+                      )}
+                    {(!parts.final && !parts.thought && isStreaming && messages.length > 0 && messages[messages.length - 1].id === message.id) && (
+                        <div className="assistant-typing"><span className="typing-indicator"><span /><span /><span /></span><p>正在生成回答…</p></div>
+                      )}
+                    </div>
+                  )
+                })()
+              ) : (
+                message.content.split('\\n').map((line, index) => (
+                  <p key={`${message.id}-${index}`}>{line}</p>
+                ))
+              )}
+            </div>
+          </div>
+        ))}
+            {false && (
               <div className="bubble assistant thinking">
                 <span className="bubble-role">Qwen</span>
                 <div className="bubble-content">
@@ -1311,65 +1421,98 @@ function App() {
             <div ref={messageEndRef} />
           </main>
 
-          {latestToolEvents.length > 0 && (
-            <section className="tool-history">
-              <header>
-                <span>最新工具调用</span>
-              </header>
-              <div className="tool-scroller">
-                {[...latestToolEvents].slice(-5).map((event, index) => (
-                  <article key={`${event.tool_name}-${index}`} className="tool-chip">
-                    <strong>{event.tool_name}</strong>
-                    <pre>{JSON.stringify(event.arguments, null, 2)}</pre>
-                  </article>
-                ))}
-              </div>
-            </section>
-          )}
 
           <footer className="composer-area">
             <div className="prompt-wrapper">
               <div className="prompt-bar">
-                <button
-                  ref={featureBtnRef}
-                  type="button"
-                  className="prompt-prefix"
-                  onClick={() => setIsFeatureMenuOpen((prev) => !prev)}
-                  aria-label="选择功能"
-                >
-                  ＋
-                </button>
-                <textarea
-                  className="prompt-input"
-                  value={input}
-                  onChange={(event) => setInput(event.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={currentMode.placeholder}
-                  disabled={isStreaming}
-                />
-                <div className="prompt-actions">
-                  {isStreaming ? (
-                    <button
-                      type="button"
-                      className="action-btn stop"
-                      onClick={stopStreaming}
-                      aria-label="停止生成"
-                    >
-                      ⏹
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="action-btn send"
-                      onClick={() => void sendMessage()}
-                      disabled={input.trim().length === 0}
-                      aria-label="发送"
-                    >
-                      🚀
-                    </button>
-                  )}
-            </div>
-          </div>
+                <div className="prompt-top">
+                  <button
+                    ref={featureBtnRef}
+                    type="button"
+                    className="prompt-prefix"
+                    onClick={() => setIsFeatureMenuOpen((prev) => !prev)}
+                    aria-label="选择功能"
+                  >
+                    ＋
+                  </button>
+                  <input
+                    id="docUploadInput"
+                    type="file"
+                    style={{ display: 'none' }}
+                    accept="application/pdf,.pdf,.doc,.docx,.txt,.md,.rtf,.ppt,.pptx,.xls,.xlsx"
+                    multiple
+                    onChange={(event) => {
+                      const files = event.target.files
+                      if (!files || files.length === 0) return
+                      const names = Array.from(files).map((f) => f.name).join(', ')
+
+                      setIsFeatureMenuOpen(false)
+                      event.target.value = ''
+                    }}
+                  />
+                  <input
+                    id="imageUploadInput"
+                    type="file"
+                    style={{ display: 'none' }}
+                    accept="image/*"
+                    multiple
+                    onChange={(event) => {
+                      const files = event.target.files
+                      if (!files || files.length === 0) return
+                      const names = Array.from(files).map((f) => f.name).join(', ')
+
+                      setIsFeatureMenuOpen(false)
+                      event.target.value = ''
+                    }}
+                  />
+                  <textarea
+                    className="prompt-input"
+                    value={input}
+                    onChange={(event) => setInput(event.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={currentMode.placeholder || '询问任何问题'}
+                    disabled={isStreaming}
+                  />
+                  <div className="prompt-actions">
+                    {isStreaming ? (
+                      <button
+                        type="button"
+                        className="action-btn stop"
+                        onClick={stopStreaming}
+                        aria-label="停止生成"
+                      >
+                        ⏹
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="action-btn voice"
+                        onClick={() => void sendMessage()}
+                        disabled={input.trim().length === 0}
+                        aria-label="语音发送"
+                      >
+                        🎙
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="prompt-tools">
+                  <button
+                    type="button"
+                    className={`toggle-chip${activeConversation?.settings.deepThinking ? ' active' : ''}`}
+                    onClick={handleToggleDeepThinking}
+                  >
+                    深度思考
+                  </button>
+                  <button
+                    type="button"
+                    className={`toggle-chip${activeConversation?.settings.allowWebSearch ? ' active' : ''}`}
+                    onClick={handleToggleWebSearch}
+                  >
+                    搜索
+                  </button>
+                </div>
+              </div>
 
               {isFeatureMenuOpen && (
                 <div ref={featureMenuRef} className="feature-menu">
@@ -1377,12 +1520,19 @@ function App() {
                     <button
                       key={action.label}
                       type="button"
-                      onClick={() => handleSuggestionClick(action.label)}
+                      onClick={() => document.getElementById('docUploadInput')?.click()}
                     >
                       <span className="feature-icon">{action.icon}</span>
                       <span className="feature-label">{action.label}</span>
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    onClick={() => document.getElementById('imageUploadInput')?.click()}
+                  >
+                    <span className="feature-icon">🖼</span>
+                    <span className="feature-label">上传图片</span>
+                  </button>
                 </div>
               )}
 
@@ -1401,10 +1551,78 @@ function App() {
               )}
 
               {error && <div className="error-toast">{error}</div>}
+              {info && <div className="info-toast">{info}</div>}
             </div>
           </footer>
         </div>
       </div>
+      <aside className="tools-sidebar">
+        <div className="tools-scroll">
+        {activeConversation?.settings.deepThinking ? (
+          (() => {
+            const lastAssistant = messages.filter(m => m.role === 'assistant').slice(-1)[0]
+            if (!lastAssistant) {
+              return (
+                <section className="thinking-panel">
+                  <header className="thinking-panel-title"><span>思考过程</span></header>
+                  <div className="thinking-empty">暂无思考</div>
+                </section>
+              )
+            }
+            const parts = splitAssistantContent(lastAssistant.content)
+            return (
+              <section className="thinking-panel">
+                <header className="thinking-panel-title">
+                  <span>{parts.final ? '思考完成' : '正在思考...'}</span>
+                </header>
+                <div className="thinking-panel-content">
+                {parts.thought && (
+                  <details className="thinking-section" open>
+                    <summary className="thinking-section-summary">Thought</summary>
+                    <div className="thinking-section-body">
+                      {parts.thought.split('\n').map((line, idx) => (
+                        <p key={`thinking-th-${idx}`}>{line}</p>
+                      ))}
+                    </div>
+                  </details>
+                )}
+                {latestToolEvents.length > 0 && (
+                  <details className="thinking-section">
+                    <summary className="thinking-section-summary">Actions</summary>
+                    <div className="thinking-section-body">
+                      {latestToolEvents.map((evt, idx) => (
+                        <div key={`thinking-action-${idx}`} className="thinking-action-item">
+                          <p className="thinking-action-name">{String((evt as any).tool_name || '')}</p>
+                          <pre className="thinking-pre">{typeof (evt as any).arguments === 'string' ? (evt as any).arguments : JSON.stringify((evt as any).arguments, null, 2)}</pre>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+                {latestToolEvents.length > 0 && (
+                  <details className="thinking-section">
+                    <summary className="thinking-section-summary">Observations</summary>
+                    <div className="thinking-section-body">
+                      {latestToolEvents.map((evt, idx) => (
+                        <div key={`thinking-ob-${idx}`} className="thinking-observation-item">
+                          {renderObservation((evt as any).result)}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+                </div>
+              </section>
+            )
+          })()
+        ) : (
+          <section className="thinking-panel">
+            <header className="thinking-panel-title"><span>思考过程</span></header>
+            <div className="thinking-empty">未开启深度思考</div>
+          </section>
+        )}
+        </div>
+      </aside>
     </div>
   )
 }

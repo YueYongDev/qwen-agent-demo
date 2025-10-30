@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from typing import Iterable
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .config import get_settings
-from .models import ChatMessage, ChatRequest, ChatResponse
+from .models import ChatMessage, ChatRequest, ChatResponse, ModelsResponse
 from .services.agent_service import AgentService
 
 settings = get_settings()
@@ -35,16 +35,45 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/models", response_model=ModelsResponse)
+def list_models() -> ModelsResponse:
+    return ModelsResponse(models=agent_service.get_models())
+
+
+def _get_client_ip(request: Request) -> str:
+    # X-Forwarded-For may contain multiple IPs, left-most is the original client
+    xff = request.headers.get("x-forwarded-for") or request.headers.get("X-Forwarded-For")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    xri = request.headers.get("x-real-ip") or request.headers.get("X-Real-IP")
+    if xri:
+        return xri.strip()
+    c = getattr(request, "client", None)
+    return getattr(c, "host", "") or ""
+
+
 @app.post("/api/chat", response_model=ChatResponse)
-def chat_endpoint(payload: ChatRequest) -> ChatResponse:
+def chat_endpoint(payload: ChatRequest, request: Request) -> ChatResponse:
     if not payload.messages:
         raise HTTPException(status_code=400, detail="messages must not be empty")
 
     try:
+        client_ip = _get_client_ip(request)
+        # 打印请求入参（调试）
+        print(json.dumps({
+            "route": "/api/chat",
+            "client_ip": client_ip,
+            "lang": payload.lang,
+            "options": payload.options.model_dump(),
+            "messages_len": len(payload.messages),
+        }, ensure_ascii=False))
         result = agent_service.run_conversation(
             messages=[msg.model_dump() for msg in payload.messages],
             lang=payload.lang,
             options=payload.options.model_dump(),
+            client_ip=client_ip,
         )
     except Exception as exc:  # pragma: no cover - safeguard for demo
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -61,16 +90,26 @@ def _chunk_content(value: str, size: int = 48) -> Iterable[str]:
 
 
 @app.post("/api/chat/stream")
-def chat_stream_endpoint(payload: ChatRequest) -> StreamingResponse:
+def chat_stream_endpoint(payload: ChatRequest, request: Request) -> StreamingResponse:
     if not payload.messages:
         raise HTTPException(status_code=400, detail="messages must not be empty")
 
     def event_stream() -> Iterable[str]:
         try:
+            client_ip = _get_client_ip(request)
+            # 打印请求入参（调试）
+            print(json.dumps({
+                "route": "/api/chat/stream",
+                "client_ip": client_ip,
+                "lang": payload.lang,
+                "options": payload.options.model_dump(),
+                "messages_len": len(payload.messages),
+            }, ensure_ascii=False))
             result = agent_service.run_conversation(
                 messages=[msg.model_dump() for msg in payload.messages],
                 lang=payload.lang,
                 options=payload.options.model_dump(),
+                client_ip=client_ip,
             )
 
             assistant_messages = [

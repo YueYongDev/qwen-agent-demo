@@ -1,11 +1,15 @@
 """Custom tool implementations bundled with the demo."""
 
 from .image_generation import PollinationsImageTool
-from .web_search import DuckDuckGoSearchTool
 from .rag_tool import LocalRagTool
+from .current_time import CurrentTimeTool
+from .geo_location import GeoLocationTool
+from .public_ip import PublicIpTool
 
 __all__ = [
     "PollinationsImageTool",
-    "DuckDuckGoSearchTool",
     "LocalRagTool",
+    "CurrentTimeTool",
+    "GeoLocationTool",
+    "PublicIpTool",
 ]

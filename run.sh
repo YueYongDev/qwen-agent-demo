@@ -62,6 +62,29 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# 新增：在启动前确保端口空闲，避免旧实例占用端口
+ensure_port_free() {
+  local port="$1"
+  local pids
+  pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+  if [ -n "$pids" ]; then
+    echo "[qwen-agent] Found processes on port ${port}: ${pids}"
+    echo "[qwen-agent] Stopping processes on port ${port}..."
+    kill ${pids} 2>/dev/null || true
+    sleep 1
+    pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+      echo "[qwen-agent] Force killing processes on port ${port}..."
+      kill -9 ${pids} 2>/dev/null || true
+    fi
+  fi
+}
+
+# 新增：启动前清理端口（后端 8000，前端 5173）
+echo "[qwen-agent] Ensuring ports 8000 and 5173 are free before launch"
+ensure_port_free 8000
+ensure_port_free 5173
+
 echo "[qwen-agent] Launching backend on http://localhost:8000"
 PYTHONPATH="$BACKEND_DIR" "$VENV_DIR/bin/python" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!

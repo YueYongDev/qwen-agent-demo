@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional, Union
+from typing import List, Literal, Optional, Union, Dict, Any
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +24,14 @@ class ChatOptions(BaseModel):
     allow_image_tool: bool = Field(
         default=True,
         description="When false, the agent must avoid calling image generation tools.",
+    )
+    enable_search: bool = Field(
+        default=False,
+        description="Enable provider-native web search via extra_body when supported.",
+    )
+    search_options: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Provider-native search_options override passed via extra_body.",
     )
 
 
@@ -48,3 +56,15 @@ class ToolEvent(BaseModel):
 class ChatResponse(BaseModel):
     replies: List[ChatMessage]
     tool_events: List[ToolEvent] = Field(default_factory=list)
+
+# 新增：模型能力与列表响应的数据结构
+class ModelInfo(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    supports_thinking: bool = False
+    provider_model: Optional[str] = None
+
+class ModelsResponse(BaseModel):
+    models: List[ModelInfo] = Field(default_factory=list)
