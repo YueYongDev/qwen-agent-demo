@@ -7,8 +7,9 @@ import {
 } from 'react'
 import './App.css'
 import { marked } from 'marked'
-marked.setOptions({ async: false })
 import DOMPurify from 'dompurify'
+
+marked.setOptions({ async: false })
 
 const renderMarkdownToHtml = (src: string): string => {
   const parsed = marked.parse(src)
@@ -173,6 +174,33 @@ const MODES: ModeConfig[] = [
 
 const FEATURE_ACTIONS = [
   { label: '上传文档', icon: '📎' },
+]
+
+const MODEL_CAPABILITIES = [
+  {
+    title: '深度推理',
+    description: '多轮思考与链式推理，稳健完成复杂任务',
+    icon: '🧠',
+  },
+  {
+    title: '高效创作',
+    description: '多场景写作与结构化生成，保持语言风格一致',
+    icon: '✍️',
+  },
+  {
+    title: '知识检索',
+    description: '结合实时搜索与本地资料，输出可信答案',
+    icon: '🌐',
+  },
+]
+
+const TOOL_SHORTCUTS = [
+  { label: '图像编辑', icon: '🎨' },
+  { label: '网页开发', icon: '💻' },
+  { label: '深入研究', icon: '🔍' },
+  { label: '图像生成', icon: '🖼️' },
+  { label: '旅行规划师', icon: '🗺️' },
+  { label: '更多', icon: '⋯' },
 ]
 
 const MODE_MAP = MODES.reduce<Record<ModeId, ModeConfig>>((acc, mode) => {
@@ -1425,7 +1453,50 @@ const [defaultModelId, setDefaultModelId] = useState<ModelId>(() => loadDefaultM
           <footer className="composer-area">
             <div className="prompt-wrapper">
               <div className="prompt-bar">
+                <div className="capability-board">
+                  {MODEL_CAPABILITIES.map((capability) => (
+                    <div key={capability.title} className="capability-item">
+                      <span className="capability-icon">{capability.icon}</span>
+                      <div className="capability-copy">
+                        <span className="capability-title">{capability.title}</span>
+                        <span className="capability-desc">{capability.description}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
                 <div className="prompt-top">
+                  <textarea
+                    className="prompt-input"
+                    value={input}
+                    onChange={(event) => setInput(event.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={currentMode.placeholder || '询问任何问题'}
+                    disabled={isStreaming}
+                  />
+                  <div className="prompt-actions">
+                    {isStreaming ? (
+                      <button
+                        type="button"
+                        className="action-btn stop"
+                        onClick={stopStreaming}
+                        aria-label="停止生成"
+                      >
+                        ⏹
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="action-btn voice"
+                        onClick={() => void sendMessage()}
+                        disabled={input.trim().length === 0}
+                        aria-label="语音发送"
+                      >
+                        🎙
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="prompt-tools">
                   <button
                     ref={featureBtnRef}
                     type="button"
@@ -1465,53 +1536,32 @@ const [defaultModelId, setDefaultModelId] = useState<ModelId>(() => loadDefaultM
                       event.target.value = ''
                     }}
                   />
-                  <textarea
-                    className="prompt-input"
-                    value={input}
-                    onChange={(event) => setInput(event.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={currentMode.placeholder || '询问任何问题'}
-                    disabled={isStreaming}
-                  />
-                  <div className="prompt-actions">
-                    {isStreaming ? (
-                      <button
-                        type="button"
-                        className="action-btn stop"
-                        onClick={stopStreaming}
-                        aria-label="停止生成"
-                      >
-                        ⏹
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="action-btn voice"
-                        onClick={() => void sendMessage()}
-                        disabled={input.trim().length === 0}
-                        aria-label="语音发送"
-                      >
-                        🎙
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="prompt-tools">
                   <button
                     type="button"
                     className={`toggle-chip${activeConversation?.settings.deepThinking ? ' active' : ''}`}
                     onClick={handleToggleDeepThinking}
                   >
-                    深度思考
+                    <span className="toggle-icon">🌀</span>
+                    <span className="toggle-label">深度思考</span>
                   </button>
                   <button
                     type="button"
                     className={`toggle-chip${activeConversation?.settings.allowWebSearch ? ' active' : ''}`}
                     onClick={handleToggleWebSearch}
                   >
-                    搜索
+                    <span className="toggle-icon">🌍</span>
+                    <span className="toggle-label">搜索</span>
                   </button>
                 </div>
+              </div>
+
+              <div className="tool-shortcuts">
+                {TOOL_SHORTCUTS.map((tool) => (
+                  <button key={tool.label} type="button" className="tool-chip">
+                    <span className="tool-chip-icon">{tool.icon}</span>
+                    <span className="tool-chip-label">{tool.label}</span>
+                  </button>
+                ))}
               </div>
 
               {isFeatureMenuOpen && (

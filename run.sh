@@ -28,10 +28,8 @@ if [ -f "$BACKEND_DIR/.env" ]; then
   set +a
 fi
 
-echo "[qwen-agent] Preparing frontend dependencies..."
-if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
-  (cd "$FRONTEND_DIR" && npm install)
-fi
+echo "[qwen-agent] Installing frontend dependencies..."
+# (cd "$FRONTEND_DIR" && npm install)
 
 BACKEND_PID=""
 FRONTEND_PID=""
