@@ -105,28 +105,45 @@ def chat_stream_endpoint(payload: ChatRequest, request: Request) -> StreamingRes
                 "options": payload.options.model_dump(),
                 "messages_len": len(payload.messages),
             }, ensure_ascii=False))
-            result = agent_service.run_conversation(
+            
+            # 使用流式方法
+            stream = agent_service.run_conversation_stream(
                 messages=[msg.model_dump() for msg in payload.messages],
                 lang=payload.lang,
                 options=payload.options.model_dump(),
                 client_ip=client_ip,
             )
 
-            assistant_messages = [
-                ChatMessage(**message)
-                for message in result["replies"]
-                if message.get("role") == "assistant"
-            ]
+            # 处理流式输出
+            full_content = ""
+            agent_instance = None
+            for chunk in stream:
+                # 保存 agent 实例以获取 tool_events
+                if hasattr(stream, '__self__'):
+                    agent_instance = stream.__self__
+                
+                if isinstance(chunk, list) and len(chunk) > 0:
+                    message = chunk[0]
+                    if isinstance(message, dict):
+                        content = message.get("content", "")
+                    else:
+                        content = getattr(message, "content", "")
+                    
+                    if content and content != full_content:
+                        # 发送新的内容片段
+                        delta = content[len(full_content):]
+                        full_content = content
+                        
+                        data = json.dumps({"type": "chunk", "delta": delta}, ensure_ascii=False)
+                        yield f"data: {data}\n\n"
 
-            for message in assistant_messages:
-                content = message.content or ""
-                if not content:
-                    continue
-                for chunk in _chunk_content(content):
-                    data = json.dumps({"type": "chunk", "delta": chunk}, ensure_ascii=False)
-                    yield f"data: {data}\n\n"
-
-            tool_events = result.get("tool_events", [])
+            # 发送工具事件（如果有的话）
+            tool_events = []
+            if agent_instance and hasattr(agent_instance, 'tool_events'):
+                tool_events = agent_instance.tool_events
+            elif hasattr(agent_service, 'tool_events'):
+                tool_events = agent_service.tool_events
+                
             if tool_events:
                 data = json.dumps({"type": "tools", "tool_events": tool_events}, ensure_ascii=False)
                 yield f"data: {data}\n\n"

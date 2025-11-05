@@ -9,14 +9,14 @@ from typing import Any, Dict, List, Optional, Union
 
 import logging
 
-# 替换：引入 Assistant，若不可用则回退到 FnCallAgent，最后回退到 ReActChat 以保证运行
+# 替换：引入 ReActChat，若不可用则回退到 Assistant，最后回退到 FnCallAgent 以保证运行
 try:
-    from qwen_agent.agents.assistant import Assistant  # 优先使用 Assistant 模式
+    from qwen_agent.agents.react_chat import ReActChat as Assistant  # 优先使用 ReActChat 模式
 except Exception:
     try:
-        from qwen_agent.agents.fncall_agent import FnCallAgent as Assistant  # 回退到函数调用代理
+        from qwen_agent.agents.assistant import Assistant  # 回退到 Assistant 模式
     except Exception:
-        from qwen_agent.agents.react_chat import ReActChat as Assistant  # 最后回退，确保不宕机
+        from qwen_agent.agents.fncall_agent import FnCallAgent as Assistant  # 最后回退，确保不宕机
 from qwen_agent.tools.mcp_manager import MCPManager
 
 from ..config import get_settings
@@ -88,6 +88,12 @@ class InstrumentedAssistant(Assistant):
         )
         return result
 
+    def run(self, messages: List[Dict], **kwargs):
+        # 重置工具事件
+        self.tool_events = []
+        # 调用父类的流式方法
+        return super().run(messages, **kwargs)
+
 
 class AgentService:
     """High level façade around qwen-agent."""
@@ -106,18 +112,33 @@ class AgentService:
         ]
         self.tools.extend(self._load_mcp_tools(settings))
 
-        # 更新：Assistant 风格提示词（不强调 ReAct/工具链路）
+        # 更新：ReActChat 风格提示词（强调 ReAct/工具链路）
         self.base_prompt = (
             "You are a helpful Qwen assistant. Reply in Chinese or English as appropriate. "
             "Answer clearly and stay concise unless extended detail is requested. "
             "When you reference factual info or external data, be transparent about sources. "
-            "Do not include chain-of-thought markers (e.g., Thought, Action, Observation, Final Answer). "
-            "Provide final answers directly."
+            "Use the following format to think and take actions:\n"
+            "Thought: you should always think about what to do\n"
+            "Action: the action to take, should be one of [{tool_names}]\n"
+            "Action Input: the input to the action\n"
+            "Observation: the result of the action\n"
+            "... (this Thought/Action/Action Input/Observation can be repeated zero or more times)\n"
+            "Thought: I now know the final answer\n"
+            "Final Answer: the final answer to the original input question\n"
+            "Begin!\n\n"
         )
         self.deep_thinking_prompt = (
             "You are a helpful Qwen assistant. The deep thinking mode is enabled. "
             "Think carefully, and when helpful, provide a short reasoning summary before the final answer. "
-            "Avoid revealing internal step-by-step reasoning traces; keep the response focused and useful."
+            "Use the following format to think and take actions:\n"
+            "Thought: you should always think about what to do\n"
+            "Action: the action to take, should be one of [{tool_names}]\n"
+            "Action Input: the input to the action\n"
+            "Observation: the result of the action\n"
+            "... (this Thought/Action/Action Input/Observation can be repeated zero or more times)\n"
+            "Thought: I now know the final answer\n"
+            "Final Answer: the final answer to the original input question\n"
+            "Begin!\n\n"
         )
         self.llm_config: Dict[str, Any] = {
             "model": settings.llm_model_name,
@@ -291,7 +312,14 @@ class AgentService:
     ) -> Dict[str, Any]:
         """Execute a single turn of conversation with the agent."""
 
-        system_prompt = self.deep_thinking_prompt if options and options.get("deep_thinking") else self.base_prompt
+        # 获取工具名称列表
+        tool_names = [tool.name for tool in self.tools]
+        
+        # 更新提示词，填充工具名称
+        base_prompt = self.base_prompt.format(tool_names=", ".join(tool_names))
+        deep_thinking_prompt = self.deep_thinking_prompt.format(tool_names=", ".join(tool_names))
+        
+        system_prompt = deep_thinking_prompt if options and options.get("deep_thinking") else base_prompt
         # 基于请求动态注入用户 IP：对 GeoLocationTool 用请求 IP 重建实例
         selected_tools: List[Any] = []
         for tool in self.tools:
@@ -373,3 +401,90 @@ class AgentService:
             "replies": formatted_replies,
             "tool_events": agent.tool_events,
         }
+
+    def run_conversation_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        lang: Optional[str] = None,
+        options: Optional[Dict[str, Any]] = None,
+        client_ip: Optional[str] = None,
+    ):
+        """Execute a single turn of conversation with the agent in streaming mode."""
+
+        # 获取工具名称列表
+        tool_names = [tool.name for tool in self.tools]
+        
+        # 更新提示词，填充工具名称
+        base_prompt = self.base_prompt.format(tool_names=", ".join(tool_names))
+        deep_thinking_prompt = self.deep_thinking_prompt.format(tool_names=", ".join(tool_names))
+        
+        system_prompt = deep_thinking_prompt if options and options.get("deep_thinking") else base_prompt
+        # 基于请求动态注入用户 IP：对 GeoLocationTool 用请求 IP 重建实例
+        selected_tools: List[Any] = []
+        for tool in self.tools:
+            if not self._tool_allowed(tool, options):
+                continue
+            try:
+                from ..tools import GeoLocationTool as _GeoLocationTool
+            except Exception:
+                _GeoLocationTool = None
+            if _GeoLocationTool and isinstance(tool, _GeoLocationTool):
+                selected_tools.append(_GeoLocationTool(cfg={"client_ip": client_ip} if client_ip else None))
+            else:
+                selected_tools.append(tool)
+
+        # 基于请求选项与 DashScope 兼容环境，动态注入 enable_thinking / enable_search 到 llm 配置
+        llm_params: Dict[str, Any] = dict(self.llm_config)
+        extra_body: Dict[str, Any] = dict(llm_params.get("extra_body") or {})
+
+        if options and options.get("deep_thinking") and self._is_dashscope():
+            extra_body["enable_thinking"] = True
+
+        if self._is_dashscope():
+            want_enable_search = bool(options.get("enable_search")) if options else False
+            if not want_enable_search and self.default_enable_search:
+                want_enable_search = True
+            if want_enable_search:
+                extra_body["enable_search"] = True
+                # 请求覆盖优先，其次使用默认 SEARCH_OPTIONS_JSON
+                override_opts = options.get("search_options") if options else None
+                chosen_opts = override_opts if isinstance(override_opts, dict) else self.default_search_options
+                if isinstance(chosen_opts, dict) and chosen_opts:
+                    extra_body["search_options"] = chosen_opts
+
+        if extra_body:
+            llm_params["extra_body"] = extra_body
+
+        # 合并/设置 generate_cfg；thought_in_content 仅由"深度思考"按钮决定且总是布尔值
+        generate_cfg: Dict[str, Any] = dict(llm_params.get("generate_cfg") or {})
+        if self.inline_generate_cfg:
+            generate_cfg.update(self.inline_generate_cfg)
+        generate_cfg["thought_in_content"] = bool(options.get("deep_thinking")) if options else False
+        if generate_cfg:
+            llm_params["generate_cfg"] = generate_cfg
+
+        # 新增：请求时输出 llm_params（脱敏）
+        try:
+            safe_llm_params = _redact_sensitive(llm_params)
+            logger.info("Prepared llm_params: %s", json.dumps(safe_llm_params, ensure_ascii=False))
+        except Exception as exc:
+            logger.debug("Failed to log llm_params: %s", exc)
+
+        # 替换：使用 Assistant 模式代理而非 ReActChat
+        agent = InstrumentedAssistant(
+            function_list=selected_tools,
+            llm=llm_params,
+            system_message=system_prompt,
+            name="QwenAgent",
+        )
+
+        # Ensure content is always a string to keep the demo simple.
+        normalized_messages: List[Dict[str, Any]] = []
+        for message in messages:
+            content = message.get("content", "")
+            if isinstance(content, list):
+                content = json.dumps(content, ensure_ascii=False)
+            normalized_messages.append({"role": message["role"], "content": content})
+
+        # 使用流式方法
+        return agent.run(normalized_messages, lang=lang or "zh")
