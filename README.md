@@ -1,12 +1,12 @@
 # Qwen Agent Demo
 
-使用 [qwen-agent](https://github.com/QwenLM/qwen-agent) 打造的前后端分离 Demo。后端基于 FastAPI，整合了 **生图**、**DuckDuckGo 搜索**、**本地 RAG 检索** 以及 **MCP 扩展工具**；前端使用 React + Vite 提供对话界面并展示最新的工具调用结果。默认通过本地 Ollama 的 `qwen3` 模型驱动对话。
+使用 [qwen-agent](https://github.com/QwenLM/qwen-agent) 打造的前后端分离 Demo。后端基于 FastAPI，整合了 **生图**、**网络搜索**、**本地 RAG 检索** 以及 **MCP 扩展工具**；前端使用 React + Vite 提供对话界面并展示最新的工具调用结果。默认通过本地 Ollama 的 `qwen3` 模型驱动对话。
 
 ## 功能概览
 
 - 🤖 **Qwen 对话**：默认走本地 Ollama (`http://localhost:11434/v1`) 的 `qwen3` 模型，可切换至 DashScope 或其它 OpenAI 兼容推理服务。
 - 🎨 **生图工具**：使用 Pollinations 公共 API，根据提示词生成插画并返回图片链接及可选的 Base64 预览。
-- 🔎 **搜索工具**：封装 DuckDuckGo 搜索，获取最新网页资讯摘要。
+- 🔎 **网络搜索工具**：集成 Serper API 服务，通过 `web_search` 工具获取实时网络信息和最新资讯。
 - 📚 **RAG 检索**：对 `backend/data/knowledge_base.json` 中的样例知识库执行 TF-IDF 相似度检索，提供结构化上下文。
 - 🔌 **MCP 工具**：可选对接 Model Context Protocol server，将外部能力作为工具注入对话。
 

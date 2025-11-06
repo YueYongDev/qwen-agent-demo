@@ -21,7 +21,7 @@ from qwen_agent.tools.mcp_manager import MCPManager
 
 from ..config import get_settings
 from ..rag.vector_store import VectorStore
-from ..tools import LocalRagTool, PollinationsImageTool, CurrentTimeTool, GeoLocationTool, PublicIpTool
+from ..tools import LocalRagTool, PollinationsImageTool, CurrentTimeTool, GeoLocationTool, PublicIpTool, WebSearchTool
 from ..models import ModelInfo
 
 logger = logging.getLogger(__name__)
@@ -109,6 +109,7 @@ class AgentService:
             CurrentTimeTool(),
             GeoLocationTool(),
             PublicIpTool(),
+            WebSearchTool(),
         ]
         self.tools.extend(self._load_mcp_tools(settings))
 
